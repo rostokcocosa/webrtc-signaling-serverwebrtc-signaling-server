@@ -2,7 +2,6 @@
 // Этот файл содержит код простого сигнального сервера,
 // который позволяет клиентам обмениваться WebRTC-сообщениями
 // через Socket.io для установления peer-to-peer соединения.
-// Теперь с поддержкой авторизации и адресной доставки сообщений.
 
 // 1. Импортируем необходимые библиотеки
 const express = require('express');
@@ -29,6 +28,9 @@ const users = {};
 // Хранилище для обратного поиска: id сокета -> логин
 const socketToUser = {};
 
+/**
+ * Отправляет обновленный список пользователей всем подключенным клиентам.
+ */
 function updateUserList() {
     const userList = Object.keys(users);
     io.emit('userList', userList);
@@ -41,6 +43,10 @@ io.on('connection', (socket) => {
     // Событие авторизации
     socket.on('login', (username) => {
         console.log(`Пользователь ${username} вошел в систему.`);
+        // Удаляем старый сокет, если пользователь переподключился
+        if (users[username] && users[username] !== socket.id) {
+            delete socketToUser[users[username]];
+        }
         users[username] = socket.id;
         socketToUser[socket.id] = username;
         updateUserList();
@@ -53,6 +59,9 @@ io.on('connection', (socket) => {
         const targetSocketId = users[message.target];
         if (targetSocketId) {
             io.to(targetSocketId).emit('message', message);
+        } else {
+            // Если целевой пользователь не найден, можно отправить сообщение обратно отправителю
+            io.to(socket.id).emit('message', { type: 'error', text: `Пользователь ${message.target} не найден.` });
         }
     });
 
