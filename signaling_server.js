@@ -1,7 +1,8 @@
 // signaling_server.js
 // Этот файл содержит код простого сигнального сервера,
-// который позволяет двум клиентам обмениваться WebRTC-сообщениями
+// который позволяет клиентам обмениваться WebRTC-сообщениями
 // через Socket.io для установления peer-to-peer соединения.
+// Теперь с поддержкой авторизации и адресной доставки сообщений.
 
 // 1. Импортируем необходимые библиотеки
 const express = require('express');
@@ -13,34 +14,59 @@ const app = express();
 const server = http.createServer(app);
 
 // 3. Создаем Socket.io сервер.
-// Включаем CORS, чтобы разрешить запросы с других доменов (например, вашего HTML-файла)
 const io = socketIo(server, {
     cors: {
-        origin: "*", // Разрешаем доступ с любого домена. В продакшене лучше указать конкретный домен.
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
 
 // 4. Устанавливаем порт, на котором будет работать сервер
-// Heroku и Render используют переменную среды PORT, поэтому мы должны использовать ее.
 const PORT = process.env.PORT || 3000;
+
+// Хранилище для пользователей: логин -> id сокета
+const users = {};
+// Хранилище для обратного поиска: id сокета -> логин
+const socketToUser = {};
+
+function updateUserList() {
+    const userList = Object.keys(users);
+    io.emit('userList', userList);
+}
 
 // 5. Обрабатываем соединения Socket.io
 io.on('connection', (socket) => {
     console.log('Новый клиент подключен:', socket.id);
 
+    // Событие авторизации
+    socket.on('login', (username) => {
+        console.log(`Пользователь ${username} вошел в систему.`);
+        users[username] = socket.id;
+        socketToUser[socket.id] = username;
+        updateUserList();
+    });
+
     // Слушаем сообщения от клиента.
-    // Сообщение может быть WebRTC 'offer', 'answer' или 'candidate'.
     socket.on('message', (message) => {
-        console.log('Сообщение от клиента:', socket.id, message.type);
-        // Пересылаем сообщение всем, кроме отправителя.
-        // Это простейший механизм сигнализации для 1-к-1 звонка.
-        socket.broadcast.emit('message', message);
+        console.log(`Сообщение от ${message.sender} для ${message.target}:`, message.type);
+        // Отправляем сообщение только целевому пользователю
+        const targetSocketId = users[message.target];
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('message', message);
+        }
     });
 
     // Обрабатываем отключение клиента
     socket.on('disconnect', () => {
-        console.log('Клиент отключен:', socket.id);
+        const username = socketToUser[socket.id];
+        if (username) {
+            console.log(`Пользователь ${username} отключен.`);
+            delete users[username];
+            delete socketToUser[socket.id];
+            updateUserList();
+        } else {
+            console.log('Клиент отключен:', socket.id);
+        }
     });
 });
 
